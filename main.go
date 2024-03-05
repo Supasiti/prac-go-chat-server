@@ -2,23 +2,16 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
 func main() {
-	http.HandleFunc("/chat", handleWebSocket)
+    client := NewClient()
+	http.HandleFunc("/chat", client.handleWebSocket)
 
 	server := &http.Server{Addr: ":8080"}
 	handleSigTerms(server)
@@ -30,36 +23,6 @@ func main() {
 		os.Exit(1)
 	}
 
-}
-
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		slog.Error("Error upgrading to WebSocket:", err)
-		return
-	}
-	defer conn.Close()
-
-	for {
-		// Read message from the WebSocket
-		messageType, message, err := conn.ReadMessage()
-        slog.Info(fmt.Sprintf("message type: %d", messageType))
-
-		if err != nil {
-			slog.Error("Error reading message from WebSocket:", err)
-			break
-		}
-
-		// Print the received message
-		slog.Info(fmt.Sprintf("Received message: %s\n", message))
-
-		// Echo the message back to the client
-		if err := conn.WriteMessage(messageType, message); err != nil {
-			slog.Error("Error echoing message:", err)
-			break
-		}
-	}
 }
 
 // For gracefully shutdown server
