@@ -44,6 +44,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	for {
 		// Read message from the WebSocket
 		messageType, message, err := conn.ReadMessage()
+        slog.Info(fmt.Sprintf("message type: %d", messageType))
+
 		if err != nil {
 			slog.Error("Error reading message from WebSocket:", err)
 			break
