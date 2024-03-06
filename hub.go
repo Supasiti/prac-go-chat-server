@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -58,7 +57,6 @@ func (h *hub) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := context.Background()
-	client := NewClient(ctx, h, conn)
+	client := NewClient(h, conn)
 	client.Start()
 }

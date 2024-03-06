@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"golang.org/x/sync/errgroup"
+	"github.com/supasiti/prac-go-chat-server/pkg/errgroup"
 )
 
 const (
@@ -25,7 +25,6 @@ const (
 )
 
 type client struct {
-	ctx  context.Context
 	id   int
 	hub  *hub
 	conn *websocket.Conn
@@ -37,9 +36,8 @@ type chatMessage struct {
 	Msg  []byte
 }
 
-func NewClient(ctx context.Context, hub *hub, conn *websocket.Conn) *client {
+func NewClient(hub *hub, conn *websocket.Conn) *client {
 	return &client{
-		ctx:  ctx,
 		id:   generateId(),
 		hub:  hub,
 		conn: conn,
@@ -50,20 +48,19 @@ func NewClient(ctx context.Context, hub *hub, conn *websocket.Conn) *client {
 func (c *client) Start() {
 	c.hub.register <- c
 
-	g, gCtx := errgroup.WithContext(c.ctx)
-	c.ctx = gCtx
+	g := errgroup.WithContext(context.Background())
 
 	g.Go(c.readMessage)
 	g.Go(c.writeMessage)
 
 	// will close connection in all cases
-	_ = g.Wait()
+	g.Wait()
 	slog.Info("closing websocket connection...")
 	c.hub.unregister <- c
 	c.conn.Close()
 }
 
-func (c *client) readMessage() error {
+func (c *client) readMessage(ctx context.Context) error {
 
 	c.conn.SetReadLimit(maxMsgSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -74,7 +71,7 @@ func (c *client) readMessage() error {
 
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return nil
 		default:
 			messageType, message, err := c.conn.ReadMessage()
@@ -103,7 +100,7 @@ func (c *client) readMessage() error {
 	}
 }
 
-func (c *client) writeMessage() error {
+func (c *client) writeMessage(ctx context.Context) error {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -111,7 +108,7 @@ func (c *client) writeMessage() error {
 
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return nil
 		case toSend, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
