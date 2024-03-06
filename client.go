@@ -22,11 +22,17 @@ var (
 )
 
 type client struct {
-	readCh chan []byte
+	hub    *hub
 	conn   *websocket.Conn
+	send   chan *chatMessage
 }
 
-func ServeWebSocket(w http.ResponseWriter, r *http.Request) {
+type chatMessage struct {
+	From *client
+	Msg  []byte
+}
+
+func ServeWebSocket(hub *hub, w http.ResponseWriter, r *http.Request) {
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -36,10 +42,12 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := &client{
-		readCh: make(chan []byte, bufSize),
+		hub:    hub,
 		conn:   conn,
+		send:   make(chan *chatMessage),
 	}
-
+    c.hub.register <- c
+    
 	go c.readMessage()
 	go c.writeMessage()
 }
@@ -47,13 +55,11 @@ func ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 func (c *client) readMessage() {
 	defer func() {
 		slog.Info("closing websocket connection...")
-		if c.conn != nil {
-			c.conn.Close()
-		}
+        c.hub.unregister <- c
+		c.conn.Close()
 	}()
 
 	for {
-		// Read message from the WebSocket
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
@@ -67,28 +73,32 @@ func (c *client) readMessage() {
 
 		message = bytes.TrimSpace(message)
 		slog.Info("received message:", slog.String("message", string(message)))
-		c.readCh <- message
+		c.hub.notify <- &chatMessage{From: c, Msg: message}
 	}
 }
 
 func (c *client) writeMessage() {
 	defer func() {
 		slog.Info("closing websocket connection...")
-		if c.conn != nil {
-			c.conn.Close()
-		}
+        c.hub.unregister <- c
+        c.conn.Close()
 	}()
 
 	for {
-		message, ok := <-c.readCh
+		toSend, ok := <-c.send
 		if !ok {
 			// close channel
 			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 			return
 		}
 
-		if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			slog.Error("error echoing message:", slog.Any("err", err))
+		// Don't write if it is from itself
+		if toSend.From == c {
+			continue
+		}
+
+		if err := c.conn.WriteMessage(websocket.TextMessage, toSend.Msg); err != nil {
+			slog.Error("error sending message:", slog.Any("err", err))
 			return
 		}
 	}
