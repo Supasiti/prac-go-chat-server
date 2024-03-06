@@ -1,5 +1,20 @@
 package main
 
+import (
+	"context"
+	"log/slog"
+	"net/http"
+
+	"github.com/gorilla/websocket"
+)
+
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+)
+
 type hub struct {
 	clients    map[*client]bool
 	register   chan *client
@@ -34,4 +49,16 @@ func (h *hub) Run() {
 	}
 }
 
+func (h *hub) Serve(w http.ResponseWriter, r *http.Request) {
+	// Upgrade HTTP connection to WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("error upgrading to WebSocket:", slog.Any("err", err))
+		// probably need to send something back
+		return
+	}
 
+	ctx := context.Background()
+	client := NewClient(ctx, h, conn)
+	client.Start()
+}

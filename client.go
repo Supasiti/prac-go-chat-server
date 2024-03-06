@@ -2,19 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	// maximum message size
 	maxMsgSize = 512
-
-	// buffer size for web socket. Must be bigger than maxMsgSize
-	bufSize = 2 * maxMsgSize
 
 	// Time allowed to write a message to the peer.
 	writeWait = 10 * time.Second
@@ -26,14 +24,8 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
-var (
-	upgrader = websocket.Upgrader{
-		ReadBufferSize:  bufSize,
-		WriteBufferSize: bufSize,
-	}
-)
-
 type client struct {
+	ctx  context.Context
 	id   int
 	hub  *hub
 	conn *websocket.Conn
@@ -45,33 +37,33 @@ type chatMessage struct {
 	Msg  []byte
 }
 
-func ServeWebSocket(hub *hub, w http.ResponseWriter, r *http.Request) {
-
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		slog.Error("error upgrading to WebSocket:", slog.Any("err", err))
-		return
-	}
-
-	c := &client{
+func NewClient(ctx context.Context, hub *hub, conn *websocket.Conn) *client {
+	return &client{
+		ctx:  ctx,
 		id:   generateId(),
 		hub:  hub,
 		conn: conn,
 		send: make(chan *chatMessage),
 	}
-	c.hub.register <- c
-
-	go c.readMessage()
-	go c.writeMessage()
 }
 
-func (c *client) readMessage() {
-	defer func() {
-		slog.Info("closing websocket connection...")
-		c.hub.unregister <- c
-		c.conn.Close()
-	}()
+func (c *client) Start() {
+	c.hub.register <- c
+
+	g, gCtx := errgroup.WithContext(c.ctx)
+	c.ctx = gCtx
+
+	g.Go(c.readMessage)
+	g.Go(c.writeMessage)
+
+	// will close connection in all cases
+	_ = g.Wait()
+	slog.Info("closing websocket connection...")
+	c.hub.unregister <- c
+	c.conn.Close()
+}
+
+func (c *client) readMessage() error {
 
 	c.conn.SetReadLimit(maxMsgSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -81,41 +73,46 @@ func (c *client) readMessage() {
 	})
 
 	for {
-		messageType, message, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				slog.Error("client closes connection...", slog.Any("err", err))
-				return
+		select {
+		case <-c.ctx.Done():
+			return nil
+		default:
+			messageType, message, err := c.conn.ReadMessage()
+			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					slog.Error("client closes connection...", slog.Any("err", err))
+					return err
+				}
+
+				slog.Error("error reading message...", slog.Any("err", err))
+				return err
 			}
 
-			slog.Error("error reading message...", slog.Any("err", err))
-			return
+			if messageType != websocket.TextMessage {
+				slog.Error("incorrect message type")
+				continue
+			}
+
+			message = bytes.TrimSpace(message)
+			slog.Info("received message:",
+				slog.String("message", string(message)),
+				slog.Int("from", c.id))
+
+			c.hub.notify <- &chatMessage{From: c.id, Msg: message}
 		}
-
-		if messageType != websocket.TextMessage {
-			slog.Error("incorrect message type")
-			continue
-		}
-
-		message = bytes.TrimSpace(message)
-		slog.Info("received message:",
-			slog.String("message", string(message)),
-			slog.Int("from", c.id))
-
-		c.hub.notify <- &chatMessage{From: c.id, Msg: message}
 	}
 }
 
-func (c *client) writeMessage() {
+func (c *client) writeMessage() error {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
-		slog.Info("closing websocket connection...")
 		ticker.Stop()
-		c.conn.Close()
 	}()
 
 	for {
 		select {
+		case <-c.ctx.Done():
+			return nil
 		case toSend, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 
@@ -123,7 +120,7 @@ func (c *client) writeMessage() {
 			if !ok {
 				// close channel
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
+				return nil
 			}
 
 			// Don't write if it is from itself
@@ -133,7 +130,7 @@ func (c *client) writeMessage() {
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, toSend.Msg); err != nil {
 				slog.Error("error sending message:", slog.Any("err", err))
-				return
+				return err
 			}
 		case <-ticker.C:
 			// regularly check connection
@@ -141,7 +138,7 @@ func (c *client) writeMessage() {
 
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				slog.Error("error pinging:", slog.Any("err", err))
-				return
+				return err
 			}
 		}
 	}

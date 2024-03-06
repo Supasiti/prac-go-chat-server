@@ -14,9 +14,7 @@ func main() {
 	hub := NewHub()
 	go hub.Run()
 
-	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
-		ServeWebSocket(hub, w, r)
-	})
+	http.HandleFunc("/chat", hub.Serve)
 
 	server := &http.Server{Addr: ":8080"}
 	handleSigTerms(server)
