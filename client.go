@@ -4,12 +4,26 @@ import (
 	"bytes"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	bufSize = 1024
+	// maximum message size
+	maxMsgSize = 512
+
+	// buffer size for web socket. Must be bigger than maxMsgSize
+	bufSize = 2 * maxMsgSize
+
+	// Time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next pong message from the peer.
+	pongWait = 60 * time.Second
+
+	// Send pings to peer with this period. Must be less than pongWait.
+	pingPeriod = (pongWait * 9) / 10
 )
 
 var (
@@ -17,18 +31,17 @@ var (
 		ReadBufferSize:  bufSize,
 		WriteBufferSize: bufSize,
 	}
-	newline = []byte{'\n'}
-	space   = []byte{' '}
 )
 
 type client struct {
-	hub    *hub
-	conn   *websocket.Conn
-	send   chan *chatMessage
+	id   int
+	hub  *hub
+	conn *websocket.Conn
+	send chan *chatMessage
 }
 
 type chatMessage struct {
-	From *client
+	From int
 	Msg  []byte
 }
 
@@ -42,12 +55,13 @@ func ServeWebSocket(hub *hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := &client{
-		hub:    hub,
-		conn:   conn,
-		send:   make(chan *chatMessage),
+		id:   generateId(),
+		hub:  hub,
+		conn: conn,
+		send: make(chan *chatMessage),
 	}
-    c.hub.register <- c
-    
+	c.hub.register <- c
+
 	go c.readMessage()
 	go c.writeMessage()
 }
@@ -55,12 +69,19 @@ func ServeWebSocket(hub *hub, w http.ResponseWriter, r *http.Request) {
 func (c *client) readMessage() {
 	defer func() {
 		slog.Info("closing websocket connection...")
-        c.hub.unregister <- c
+		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 
+	c.conn.SetReadLimit(maxMsgSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	for {
-		_, message, err := c.conn.ReadMessage()
+		messageType, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				slog.Error("client closes connection...", slog.Any("err", err))
@@ -71,35 +92,61 @@ func (c *client) readMessage() {
 			return
 		}
 
+		if messageType != websocket.TextMessage {
+			slog.Error("incorrect message type")
+			continue
+		}
+
 		message = bytes.TrimSpace(message)
-		slog.Info("received message:", slog.String("message", string(message)))
-		c.hub.notify <- &chatMessage{From: c, Msg: message}
+		slog.Info("received message:",
+			slog.String("message", string(message)),
+			slog.Int("from", c.id))
+
+		c.hub.notify <- &chatMessage{From: c.id, Msg: message}
 	}
 }
 
 func (c *client) writeMessage() {
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		slog.Info("closing websocket connection...")
-        c.hub.unregister <- c
-        c.conn.Close()
+		ticker.Stop()
+		c.conn.Close()
 	}()
 
 	for {
-		toSend, ok := <-c.send
-		if !ok {
-			// close channel
-			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-			return
-		}
+		select {
+		case toSend, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 
-		// Don't write if it is from itself
-		if toSend.From == c {
-			continue
-		}
+			// sending messages
+			if !ok {
+				// close channel
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
 
-		if err := c.conn.WriteMessage(websocket.TextMessage, toSend.Msg); err != nil {
-			slog.Error("error sending message:", slog.Any("err", err))
-			return
+			// Don't write if it is from itself
+			if toSend.From == c.id {
+				continue
+			}
+
+			if err := c.conn.WriteMessage(websocket.TextMessage, toSend.Msg); err != nil {
+				slog.Error("error sending message:", slog.Any("err", err))
+				return
+			}
+		case <-ticker.C:
+			// regularly check connection
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				slog.Error("error pinging:", slog.Any("err", err))
+				return
+			}
 		}
 	}
+}
+
+func generateId() int {
+	return int(time.Now().UnixMilli())
 }

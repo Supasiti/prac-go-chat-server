@@ -11,8 +11,8 @@ import (
 )
 
 func main() {
-    hub := NewHub()
-    go hub.Run()
+	hub := NewHub()
+	go hub.Run()
 
 	http.HandleFunc("/chat", func(w http.ResponseWriter, r *http.Request) {
 		ServeWebSocket(hub, w, r)
