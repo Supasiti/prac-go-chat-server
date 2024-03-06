@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,19 +11,17 @@ import (
 )
 
 func main() {
-    client := NewClient()
-	http.HandleFunc("/chat", client.handleWebSocket)
+	http.HandleFunc("/chat", ServeWebSocket)
 
 	server := &http.Server{Addr: ":8080"}
 	handleSigTerms(server)
 
-	slog.Info("Starting a chat server at port: 8080")
+	slog.Info("starting a chat server at port: 8080")
 	err := server.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
-		slog.Error("ListenAndServe() error", err)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("ListenAndServe() error", slog.Any("err", err))
 		os.Exit(1)
 	}
-
 }
 
 // For gracefully shutdown server
@@ -36,7 +35,7 @@ func handleSigTerms(server *http.Server) {
 
 		err := server.Shutdown(context.Background())
 		if err != nil {
-			slog.Error("server.Shutdown() error", err)
+			slog.Error("server.Shutdown() error: ", slog.Any("err", err))
 		}
 
 		os.Exit(1)

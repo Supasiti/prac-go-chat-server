@@ -1,53 +1,95 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
 	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/websocket"
 )
 
+const (
+	bufSize = 1024
+)
+
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  bufSize,
+		WriteBufferSize: bufSize,
+	}
+	newline = []byte{'\n'}
+	space   = []byte{' '}
+)
+
 type client struct {
-	upgrader websocket.Upgrader
+	readCh chan []byte
+	conn   *websocket.Conn
 }
 
-func NewClient() *client {
-	bufSize := 1024
+func ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 
-	return &client{
-		upgrader: websocket.Upgrader{
-			ReadBufferSize:  bufSize,
-			WriteBufferSize: bufSize,
-		}}
-}
-
-func (c *client) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Upgrade HTTP connection to WebSocket
-	conn, err := c.upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Error("Error upgrading to WebSocket:", err)
+		slog.Error("error upgrading to WebSocket:", slog.Any("err", err))
 		return
 	}
-	defer conn.Close()
+
+	c := &client{
+		readCh: make(chan []byte, bufSize),
+		conn:   conn,
+	}
+
+	go c.readMessage()
+	go c.writeMessage()
+}
+
+func (c *client) readMessage() {
+	defer func() {
+		slog.Info("closing websocket connection...")
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	}()
 
 	for {
 		// Read message from the WebSocket
-		messageType, message, err := conn.ReadMessage()
-		slog.Info(fmt.Sprintf("message type: %d", messageType))
-
+		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			slog.Error("Error reading message from WebSocket:", err)
-			break
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				slog.Error("client closes connection...", slog.Any("err", err))
+				return
+			}
+
+			slog.Error("error reading message...", slog.Any("err", err))
+			return
 		}
 
-		// Print the received message
-		slog.Info(fmt.Sprintf("Received message: %s\n", message))
+		message = bytes.TrimSpace(message)
+		slog.Info("received message:", slog.String("message", string(message)))
+		c.readCh <- message
+	}
+}
 
-		// Echo the message back to the client
-		if err := conn.WriteMessage(messageType, message); err != nil {
-			slog.Error("Error echoing message:", err)
-			break
+func (c *client) writeMessage() {
+	defer func() {
+		slog.Info("closing websocket connection...")
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	}()
+
+	for {
+		message, ok := <-c.readCh
+		if !ok {
+			// close channel
+			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
+		}
+
+		if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			slog.Error("error echoing message:", slog.Any("err", err))
+			return
 		}
 	}
 }
