@@ -5,8 +5,10 @@ GOBUILD := $(GO) build
 GOFILES := $(shell find . -name "*.go" -type f)
 GOFMT := $(GO) fmt
 GOAIR := bin/air
-MAIN_PACKAGE_PATH := ./main.go
+MAIN_PACKAGE_PATH := ./cmd/server/main.go
 BINARY_NAME := server
+CLIENT_PATH := ./cmd/client/main.go
+CLIENT_NAME := chat_client
 
 
 $(GOAIR):
@@ -33,4 +35,16 @@ build:
 run: setup
 	@echo "Running the server..."
 	@$(GOAIR)
+
+
+.PHONY: build-client
+build-client: 
+	@echo "Building the client application..."
+	@$(GOBUILD) -o ./app/${CLIENT_NAME} ${CLIENT_PATH}
+
+
+.PHONY: run-client
+run-client: build-client 
+	@echo "Running the client..."
+	./app/${CLIENT_NAME}
 
