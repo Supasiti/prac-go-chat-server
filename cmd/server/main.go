@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+    "github.com/supasiti/prac-go-chat-server/internal/server"
 )
 
 func main() {
-	hub := NewHub()
+	hub := server.NewHub()
 	go hub.Run()
 
 	http.HandleFunc("/chat", hub.Serve)
