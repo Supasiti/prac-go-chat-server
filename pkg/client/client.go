@@ -2,16 +2,17 @@ package client
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/supasiti/prac-go-chat-server/pkg/errgroup"
 )
 
 type client struct {
 	conn *websocket.Conn
+
+    wg sync.WaitGroup
 }
 
 func NewClient(conn *websocket.Conn) *client {
@@ -19,66 +20,64 @@ func NewClient(conn *websocket.Conn) *client {
 }
 
 func (c *client) Start() {
-	g := errgroup.WithContext(context.Background())
+    c.wg.Add(2)
 
-	g.Go(c.read)
-	g.Go(c.send)
-
-	// will close connection in all cases
-	g.Wait()
-    if err := c.conn.Close(); err != nil {
-		return
-	}
+	go c.read()
+	go c.send()
+    
+    c.wg.Wait()
 }
 
-func (c *client) read(ctx context.Context) error {
-	for {
-        _, message, err := c.conn.ReadMessage()
-        if err != nil {
-            if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-                fmt.Println("exiting chat room")
-                return err
-            }
-            return err
-        } 
-        fmt.Printf("Received: %s\n", message)
-	}
-}
-
-func (c *client) send(ctx context.Context) error {
+func (c *client) read() {
 	defer c.conn.Close()
+    defer c.wg.Done()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Print("Enter message to send (type 'exit' to quit): ")
-			text, err := reader.ReadString('\n')
-			if err != nil {
-				return err
-			}
+		_, message, err := c.conn.ReadMessage()
+		if err != nil {
+			fmt.Println("exiting chat room")
+			return
+		}
+		fmt.Printf("Received: %s\n", message)
+	}
+}
 
-			if text == "exit\n" {
-				err = c.conn.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(
-						websocket.CloseNormalClosure,
-						"Leaving chat room",
-					),
-				)
-				if err != nil {
-					return err
-				}
-				return nil
-			}
+// See here https://github.com/gorilla/websocket/issues/720
+// for discussion around closing connection properly
+// In summary, ask the following questions
+//  1. Do you want to specify the close code and reason reported to the peer applications?
+//  2. Do you want to be able to read all messages written by the
+//     peer - 'clean' close. If it's OK to ignore a message
+//     written by the peer, then you don't need a clean close.
+//
+// Algorithm for closing is
+//   - if the answer to (1) and (2) are yes, initiate a close message
+//   - if the answer to (2) is yes, then wait with timeout for the peer to response with
+//     a close message
+//   - else close the connection
+//
+// In most cases, the last option is fine
+func (c *client) send() {
+	defer c.conn.Close()
+    defer c.wg.Done()
 
-			// Send the message to the WebSocket server
-			err = c.conn.WriteMessage(websocket.TextMessage, []byte(text))
-			if err != nil {
-				fmt.Println("send error:", err)
-				return err
-			}
+	for {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter message to send (type 'exit' to quit): ")
+		text, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+
+		if text == "exit\n" {
+			return
+		}
+
+		// Send the message to the WebSocket server
+		err = c.conn.WriteMessage(websocket.TextMessage, []byte(text))
+		if err != nil {
+			fmt.Println("send error:", err)
+			return
 		}
 	}
 }
