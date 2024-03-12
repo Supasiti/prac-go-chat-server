@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -70,33 +71,27 @@ func (c *client) readMessage(ctx context.Context) error {
 	})
 
 	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			messageType, message, err := c.conn.ReadMessage()
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-					slog.Error("client closes connection...", slog.Any("err", err))
-					return err
-				}
-
-				slog.Error("error reading message...", slog.Any("err", err))
+		messageType, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				slog.Info("client closes connection...", slog.Any("err", err))
 				return err
 			}
-
-			if messageType != websocket.TextMessage {
-				slog.Error("incorrect message type")
-				continue
-			}
-
-			message = bytes.TrimSpace(message)
-			slog.Info("received message:",
-				slog.String("message", string(message)),
-				slog.Int("from", c.id))
-
-			c.hub.notify <- &chatMessage{From: c.id, Msg: message}
+			slog.Error("error reading message...", slog.Any("err", err))
+			return err
 		}
+
+		if messageType != websocket.TextMessage {
+			slog.Error("incorrect message type")
+			continue
+		}
+
+		message = bytes.TrimSpace(message)
+		slog.Info("received message:",
+			slog.String("message", string(message)),
+			slog.Int("from", c.id))
+
+		c.hub.notify <- &chatMessage{From: c.id, Msg: message}
 	}
 }
 
@@ -116,8 +111,13 @@ func (c *client) writeMessage(ctx context.Context) error {
 			// sending messages
 			if !ok {
 				// close channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return nil
+				c.conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(
+						websocket.CloseNormalClosure,
+						"closing chat room",
+					),
+				)
+				return errors.New("closing sending channel")
 			}
 
 			// Don't write if it is from itself

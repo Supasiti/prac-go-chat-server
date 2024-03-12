@@ -36,10 +36,7 @@ func (h *hub) Run() {
 		case client := <-h.register:
 			h.clients[client] = true
 		case client := <-h.unregister:
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-			}
+			delete(h.clients, client)
 		case chat := <-h.notify:
 			for client := range h.clients {
 				client.send <- chat
