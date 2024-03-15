@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-    "github.com/supasiti/prac-go-chat-server/internal/server"
+	"github.com/supasiti/prac-go-chat-server/internal/server"
 )
 
 func main() {

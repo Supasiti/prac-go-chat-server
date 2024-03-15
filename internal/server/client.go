@@ -102,8 +102,8 @@ func (c *client) write() {
 
 	for {
 		select {
-        case <-c.done:
-            return
+		case <-c.done:
+			return
 		case toSend, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 

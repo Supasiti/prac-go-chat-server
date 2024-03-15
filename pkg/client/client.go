@@ -1,44 +1,37 @@
 package client
 
 import (
-	"bufio"
-	"fmt"
-	"os"
-	"sync"
+	"log"
 
 	"github.com/gorilla/websocket"
 )
 
 type client struct {
 	conn *websocket.Conn
-
-    wg sync.WaitGroup
 }
+
+type OnRead func(interface{})
 
 func NewClient(conn *websocket.Conn) *client {
 	return &client{conn: conn}
 }
 
-func (c *client) Start() {
-    c.wg.Add(2)
-
-	go c.read()
-	go c.send()
-    
-    c.wg.Wait()
-}
-
-func (c *client) read() {
+// Running read in a separate goroutine
+func (c *client) StartListening(onRead OnRead) {
 	defer c.conn.Close()
-    defer c.wg.Done()
+
+	log.Println("ws: start listening...")
 
 	for {
 		_, message, err := c.conn.ReadMessage()
+		log.Println("ws: message ", string(message))
 		if err != nil {
-			fmt.Println("exiting chat room")
+			log.Println("ws: err ", err)
+			onRead(errMsg(err))
 			return
 		}
-		fmt.Printf("Received: %s\n", message)
+
+		onRead(chatMsg{msg: string(message), from: "Other"})
 	}
 }
 
@@ -57,27 +50,16 @@ func (c *client) read() {
 //   - else close the connection
 //
 // In most cases, the last option is fine
-func (c *client) send() {
-	defer c.conn.Close()
-    defer c.wg.Done()
-
-	for {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Enter message to send (type 'exit' to quit): ")
-		text, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-
-		if text == "exit\n" {
-			return
-		}
-
-		// Send the message to the WebSocket server
-		err = c.conn.WriteMessage(websocket.TextMessage, []byte(text))
-		if err != nil {
-			fmt.Println("send error:", err)
-			return
-		}
+func (c *client) Send(text string) error {
+	err := c.conn.WriteMessage(websocket.TextMessage, []byte(text))
+	if err != nil {
+		c.Close()
+		return err
 	}
+	return nil
+}
+
+// Close the underlying websocket connection
+func (c *client) Close() error {
+	return c.conn.Close()
 }
