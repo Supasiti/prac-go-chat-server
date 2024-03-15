@@ -26,26 +26,29 @@ const (
 type token struct{}
 
 type client struct {
-	id   int
-	hub  *hub
-	conn *websocket.Conn
-	send chan *chatMessage
-	done chan *token
-	wg   sync.WaitGroup
+	id       int
+	username string
+	hub      *hub
+	conn     *websocket.Conn
+	send     chan *chatMessage
+	done     chan *token
+	wg       sync.WaitGroup
 }
 
 type chatMessage struct {
-	From int
-	Msg  []byte
+	FromId int
+	From   string
+	Msg    []byte
 }
 
-func NewClient(hub *hub, conn *websocket.Conn) *client {
+func NewClient(hub *hub, conn *websocket.Conn, username string) *client {
 	return &client{
-		id:   generateId(),
-		hub:  hub,
-		conn: conn,
-		send: make(chan *chatMessage),
-		done: make(chan *token),
+		id:       generateId(),
+		username: username,
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan *chatMessage),
+		done:     make(chan *token),
 	}
 }
 
@@ -89,9 +92,9 @@ func (c *client) read() {
 		message = bytes.TrimSpace(message)
 		slog.Info("received message:",
 			slog.String("message", string(message)),
-			slog.Int("from", c.id))
+			slog.String("from", c.username))
 
-		c.hub.notify <- &chatMessage{From: c.id, Msg: message}
+		c.hub.notify <- &chatMessage{FromId: c.id, From: c.username, Msg: message}
 	}
 }
 
@@ -114,11 +117,16 @@ func (c *client) write() {
 			}
 
 			// Don't write if it is from itself
-			if toSend.From == c.id {
+			if toSend.FromId == c.id {
 				continue
 			}
 
-			if err := c.conn.WriteMessage(websocket.TextMessage, toSend.Msg); err != nil {
+			// message sent will be of the format:
+			// <username>:<message>
+			message := append([]byte(toSend.From), ':')
+			message = append(message, toSend.Msg...)
+
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				slog.Error("error sending message:", slog.Any("err", err))
 				return
 			}

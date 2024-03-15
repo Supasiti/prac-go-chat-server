@@ -46,5 +46,5 @@ build-client:
 .PHONY: run-client
 run-client: build-client 
 	@echo "Running the client..."
-	./app/${CLIENT_NAME}
+	./app/${CLIENT_NAME} bob 
 

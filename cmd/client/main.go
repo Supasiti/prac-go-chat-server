@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/gorilla/websocket"
 	"github.com/supasiti/prac-go-chat-server/pkg/client"
 )
 
@@ -19,28 +19,34 @@ var (
 )
 
 func main() {
-    if debug {
-        fmt.Println("Debug mode")
-        f, err := tea.LogToFile("debug.log", "debug")
-        if err != nil {
-            log.Fatal("fatal:", err)
-        }
-        defer f.Close()
-    }
+	log.SetOutput(io.Discard)
+	if debug {
+		fmt.Println("Debug mode")
+		f, err := tea.LogToFile("debug.log", "debug")
+		if err != nil {
+			log.Fatal("fatal:", err)
+		}
+		defer f.Close()
+	}
 
-	// Establish WebSocket connection
-	conn, _, err := websocket.DefaultDialer.Dial(wsUrl, nil)
+	if len(os.Args) < 2 {
+		fmt.Println("Missing argument! Please provide a name.")
+		return
+	}
+
+	username := os.Args[1]
+	conn, err := client.NewWsConnection(wsUrl, username)
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
 	defer conn.Close()
 
 	c := client.NewClient(conn)
-    m := client.NewModel(c)
+	m := client.NewModel(c)
 	p := tea.NewProgram(m)
 
-    // start listening on ws
-    go c.StartListening(client.HandleOnRead(p))
+	// start listening on ws
+	go c.StartListening(client.HandleOnRead(p))
 
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)

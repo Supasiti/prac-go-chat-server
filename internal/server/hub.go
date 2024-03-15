@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -46,14 +47,25 @@ func (h *hub) Run() {
 }
 
 func (h *hub) Serve(w http.ResponseWriter, r *http.Request) {
+	// get username for header
+	username := r.Header.Get("Username")
+	if username == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "apierror: Username is required in Header")
+		return
+	}
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("error upgrading to WebSocket:", slog.Any("err", err))
-		// probably need to send something back
+		w.WriteHeader(http.StatusInternalServerError)
+        w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "apierror: Bad handshake")
 		return
 	}
 
-	client := NewClient(h, conn)
+	client := NewClient(h, conn, username)
 	client.Start()
 }

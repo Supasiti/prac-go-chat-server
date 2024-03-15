@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"log"
 
 	"github.com/gorilla/websocket"
@@ -21,17 +22,30 @@ func (c *client) StartListening(onRead OnRead) {
 	defer c.conn.Close()
 
 	log.Println("ws: start listening...")
+    var from []byte
+    var msg []byte
+    var err error
 
 	for {
-		_, message, err := c.conn.ReadMessage()
-		log.Println("ws: message ", string(message))
+		_, msg, err = c.conn.ReadMessage()
+		log.Println("ws: message ", string(msg))
 		if err != nil {
 			log.Println("ws: err ", err)
 			onRead(errMsg(err))
 			return
 		}
+        
+        // message is of the format <username>:<message>
+		colonIndex := bytes.IndexByte(msg, ':')
 
-		onRead(chatMsg{msg: string(message), from: "Other"})
+		if colonIndex == -1 {
+            log.Fatal("message is incorrect format")
+        }
+
+        from = msg[:colonIndex]
+        msg = msg[colonIndex+1:]
+
+		onRead(chatMsg{msg: string(msg), from: string(from)})
 	}
 }
 
