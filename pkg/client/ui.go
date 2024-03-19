@@ -26,12 +26,14 @@ type chatMsg struct {
 type errMsg error
 
 var (
-    borderStyle = lipgloss.NewStyle().
-        BorderStyle(lipgloss.RoundedBorder()).Padding(0, 1)
+	borderStyle = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).Padding(0, 1)
 )
 
 // --------------------------
-//   Init
+//
+//	Init
+//
 // --------------------------
 func NewModel(wsclient *client) model {
 	ta := textarea.New()
@@ -69,7 +71,9 @@ func (m model) Init() tea.Cmd {
 }
 
 // --------------------------
-//   Update
+//
+//	Update
+//
 // --------------------------
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
@@ -142,7 +146,9 @@ func (m model) exit() (tea.Model, tea.Cmd) {
 }
 
 // --------------------------
-//   View
+//
+//	View
+//
 // --------------------------
 func (m model) View() string {
 	return fmt.Sprintf(
@@ -161,7 +167,9 @@ func (m model) viewportView() string {
 }
 
 // --------------------------
-//   Util
+//
+//	Util
+//
 // --------------------------
 func HandleOnRead(p *tea.Program) OnRead {
 	return func(msg interface{}) {
